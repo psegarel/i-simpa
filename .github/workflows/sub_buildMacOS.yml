@@ -37,7 +37,7 @@ jobs:
         run: |
           brew install python@3.14
           echo 'MACOSX_DEPLOYMENT_TARGET=14.0' >> "$GITHUB_ENV"
-      - name: Prepare compatible Python link library
+      - name: Prepare compatible Python framework
         if: ${{ inputs.intel }}
         run: |
           set -euo pipefail
@@ -48,9 +48,9 @@ jobs:
           python_payload="$RUNNER_TEMP/python-installer/Python_Framework.pkg/Payload/Versions/3.14"
           library="$RUNNER_TEMP/libpython3.14.dylib"
           cp "$python_payload/Python" "$library"
-          install_name_tool -id /usr/local/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Python "$library"
           echo "SONOMA_PYTHON_LIBRARY=$library" >> "$GITHUB_ENV"
           echo "SONOMA_PYTHON_INCLUDE=$python_payload/include/python3.14" >> "$GITHUB_ENV"
+          echo "SONOMA_PYTHON_FRAMEWORK=$RUNNER_TEMP/python-installer/Python_Framework.pkg/Payload" >> "$GITHUB_ENV"
       - name: Check Python compatibility
         if: ${{ inputs.intel }}
         run: |
@@ -76,16 +76,20 @@ jobs:
       - name: Compiling sources
         run: |
           cmake --build "${{ env.builddir }}" --config Release
+      - name: Bundle and validate Intel Python runtime
+        if: ${{ inputs.intel }}
+        run: |
+          set -euo pipefail
+          app="${{ env.builddir }}/src/isimpa/Release/isimpa.app"
+          python3 .github/scripts/bundle-macos-python.py "$app" "$SONOMA_PYTHON_FRAMEWORK"
+          python3 .github/scripts/check-macos-compat.py --contained-in "$app" "$app"
+          python3 .github/scripts/check-bundled-python.py "$app"
+          codesign --verify --deep --strict "$app"
+          python3 .github/scripts/test-macos-compat.py
       - name: Create distribution package
         run: |
           cpack -G DragNDrop
         working-directory: ${{ env.builddir }}
-      - name: Upload I-Simpa standalone
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.intel && 'macos_intel_dmg' || 'macos_dmg' }}
-          path: ${{ env.builddir }}/distribution/*.dmg
-          if-no-files-found: error
       - name: Inspect packaged Intel binaries
         if: ${{ inputs.intel }}
         run: |
@@ -101,7 +105,9 @@ jobs:
           test -f "$app/Contents/MacOS/$executable"
           lipo "$app/Contents/MacOS/$executable" -verify_arch x86_64
           python3 .github/scripts/check-bundle-resources.py "$app"
-          python3 .github/scripts/check-macos-compat.py "$app"
+          python3 .github/scripts/check-macos-compat.py --contained-in "$app" "$app"
+          python3 .github/scripts/check-bundled-python.py "$app"
+          codesign --verify --deep --strict "$app"
       - name: Inspect packaged Apple Silicon binaries
         if: ${{ !inputs.intel }}
         run: |
@@ -123,6 +129,9 @@ jobs:
               lipo "$binary" -verify_arch arm64
             fi
           done
-
-
-
+      - name: Upload I-Simpa standalone
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.intel && 'macos_intel_dmg' || 'macos_dmg' }}
+          path: ${{ env.builddir }}/distribution/*.dmg
+          if-no-files-found: error

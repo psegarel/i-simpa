@@ -86,7 +86,23 @@ void ProjectManager::InitPythonEngine()
 	{
 		PythonShell::load_uictrl();
 
-		Py_Initialize();
+#ifdef __WXOSX__
+        // Keep imports from modifying resources inside the signed app bundle.
+        PyConfig config;
+        PyConfig_InitPythonConfig(&config);
+        config.write_bytecode = 0;
+        const PyStatus status = Py_InitializeFromConfig(&config);
+        if (PyStatus_Exception(status)) {
+            wxLogError(wxGetTranslation("Unable to initialize Python Shell library"));
+            if (status.err_msg)
+                wxLogError("%s", wxString::FromUTF8(status.err_msg));
+            PyConfig_Clear(&config);
+            return;
+        }
+        PyConfig_Clear(&config);
+#else
+        Py_Initialize();
+#endif
 
 		try {
 			pyShell = new PythonShell(shellControl);
